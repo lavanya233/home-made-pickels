@@ -2,13 +2,13 @@ from flask import Flask, render_template, request, redirect, url_for, session
 from werkzeug.security import generate_password_hash, check_password_hash
 import boto3
 from datetime import datetime
-import json,uuid
+import json, uuid
 from decimal import Decimal
 
 app = Flask(__name__)
 app.secret_key = 'your_very_secret_key_12345'  # Change for production!
 
-dynamodb = boto3.resource('dynamodb', region_name='ap-south-1')  # e.g., 'us-east-1'
+dynamodb = boto3.resource('dynamodb', region_name='us-east-1')  # e.g., 'us-east-1'
 users_table = dynamodb.Table('Users')
 orders_table = dynamodb.Table('Orders')
 
@@ -33,7 +33,7 @@ products = {
         {'id': 10, 'name': 'Kakarakaya Pickle', 'weights': {'250': 130, '500': 240, '1000': 450}},
         {'id': 11, 'name': 'Chintakaya Pickle', 'weights': {'250': 130, '500': 240, '1000': 450}},
         {'id': 12, 'name': 'Spicy Pandu Mirchi', 'weights': {'250': 130, '500': 240, '1000': 450}}
-    ],  # Add your veg pickle products here
+    ],
     'snacks': [
         {'id': 7, 'name': 'Banana Chips', 'weights': {'250': 300, '500': 600, '1000': 800}},
         {'id': 8, 'name': 'Crispy Aam-Papad', 'weights': {'250': 150, '500': 300, '1000': 600}},
@@ -47,7 +47,7 @@ products = {
         {'id': 16, 'name': 'Kaju Chikki', 'weights': {'250': 250, '500': 500, '1000': 750}},
         {'id': 17, 'name': 'PeaNut Chikki', 'weights': {'250': 250, '500': 500, '1000': 750}},
         {'id': 18, 'name': 'Rava Laddu', 'weights': {'250': 250, '500': 500, '1000': 750}}
-    ]        # Add your snack products here
+    ]
 }
 
 # ================== AUTHENTICATION ROUTES ==================
@@ -92,9 +92,13 @@ def login():
 @app.route('/signup', methods=['GET', 'POST'])
 def signup():
     if request.method == 'POST':
-        username = request.form['username'].strip()
-        email = request.form['email'].strip()
-        password = request.form['password']
+        username = request.form.get('username', '').strip()
+        email = request.form.get('email', '').strip()
+        password = request.form.get('password', '')
+
+        # Validate inputs
+        if not username or not email or not password:
+            return render_template('signup.html', error='All fields are required')
 
         try:
             # Check if username exists
@@ -102,15 +106,15 @@ def signup():
             if 'Item' in response:
                 return render_template('signup.html', error='Username already exists')
 
-            # Hash password before storing
+            # Hash password
             hashed_password = generate_password_hash(password)
 
-            # Store new user in DynamoDB
+            # Store user in DynamoDB
             users_table.put_item(
                 Item={
                     'username': username,
                     'email': email,
-                    'password': hashed_password  # Store hashed password
+                    'password': hashed_password
                 }
             )
 
@@ -118,8 +122,9 @@ def signup():
 
         except Exception as e:
             app.logger.error(f"Signup error: {str(e)}")
-            return render_template('signup.html', error='Registration failed. Please try again.')
+            return render_template('signup.html', error="Registration failed. Please try again.")
 
+    # For GET request - this MUST be at the function level
     return render_template('signup.html')
 
 @app.route('/logout')
@@ -146,7 +151,6 @@ def veg_pickles():
     if not session.get('logged_in'):
         return redirect(url_for('login'))
     
-    # Simply pass all products without filtering
     return render_template('veg_pickles.html', products=products['veg_pickles'])
 
 @app.route('/snacks')
@@ -168,8 +172,6 @@ def checkout():
     if not session.get('logged_in'):
         return redirect(url_for('login'))
     
-    error_message = None  # Variable to hold error messages
-
     if request.method == 'POST':
         try:
             # Extract form data safely
@@ -191,7 +193,7 @@ def checkout():
 
             try:
                 cart_items = json.loads(cart_data)
-                total_amount = Decimal(total_amount)  # ✅ Convert to Decimal for DynamoDB
+                total_amount = Decimal(total_amount)  # Convert to Decimal for DynamoDB
             except (json.JSONDecodeError, ValueError):
                 return render_template('checkout.html', error="Invalid cart data format.")
 
@@ -209,29 +211,27 @@ def checkout():
                         'address': address,
                         'phone': phone,
                         'items': cart_items,
-                        'total_amount': str(total_amount),  # ✅ Convert Decimal to string to avoid JSON issues
+                        'total_amount': str(total_amount),  # Convert Decimal to string
                         'payment_method': payment_method,
                         'timestamp': datetime.now().isoformat()
                     }
                 )
             except Exception as db_error:
-                print(f"DynamoDB Error: {db_error}")
+                app.logger.error(f"DynamoDB Error: {db_error}")
                 return render_template('checkout.html', error="Failed to save order. Please try again later.")
 
-            # Redirect to success page with success message
-            return redirect(url_for('sucess', message="Your order has been placed successfully!"))  # ✅ Fixed typo
+            # Redirect to success page
+            return redirect(url_for('sucess', message="Your order has been placed successfully!"))
 
         except Exception as e:
-            print(f"Checkout error: {str(e)}")
+            app.logger.error(f"Checkout error: {str(e)}")
             return render_template('checkout.html', error="An unexpected error occurred. Please try again.")
 
-    return render_template('checkout.html')  # Render checkout page for GET request
-
+    return render_template('checkout.html')
 
 @app.route('/sucess')
-def sucess():  # ✅ Match function name with url_for('sucess')
+def sucess():
     return render_template('sucess.html')
 
-
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)  # Add debug=True temporarily
+    app.run(host='0.0.0.0', port=5000, debug=True)
